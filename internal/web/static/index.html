@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NETWORK INPUT/OUTPUT 流量</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="page-shell">
+    <p class="home-row"><a href="/">MRTG首页</a></p>
+    <h1>NETWORK INPUT/OUTPUT流量</h1>
+
+    <div class="system-info">
+      <div>上次统计更新时间: <strong id="updatedAt">--</strong></div>
+      <div>设备名称 '<strong id="interfaceName">--</strong>', 已运行时间(UPTIME): <strong id="uptime">--</strong>.</div>
+      <div>采集状态: <strong id="connectionState" class="online-text">正在连接</strong></div>
+    </div>
+
+    <div id="errorBanner" class="error-banner" role="alert" hidden></div>
+
+    <h2>当前流量统计</h2>
+    <table class="overview-table">
+      <thead><tr><th></th><th>当前</th><th>今日</th><th>最近 30 日</th></tr></thead>
+      <tbody>
+        <tr><th class="input-label">INPUT流量(Bytes)</th><td id="rxRate">--</td><td rowspan="2"><strong id="todayTotal">--</strong><small id="todaySplit">入站 -- · 出站 --</small></td><td rowspan="2"><strong id="monthTotal">--</strong><small id="monthSplit">入站 -- · 出站 --</small></td></tr>
+        <tr><th class="output-label">OUTPUT流量(Bytes)</th><td id="txRate">--</td></tr>
+      </tbody>
+    </table>
+
+    <hr>
+
+    <section class="chart-section">
+      <div class="section-title-row">
+        <h2 id="trafficTitle">每日 图表 (5 分钟 平均)</h2>
+        <div class="text-tabs" id="trafficRange" aria-label="流量图时间范围">
+          <button class="active" data-range="day">每日</button><span>|</span>
+          <button data-range="week">每周</button><span>|</span>
+          <button data-range="month">每月</button>
+        </div>
+      </div>
+      <div class="chart-wrap"><canvas id="trafficChart" role="img" aria-label="入站与出站网络速度折线图"></canvas><div id="trafficEmpty" class="chart-empty" hidden>正在收集流量样本…</div><div id="trafficTooltip" class="chart-tooltip" hidden></div></div>
+      <div class="stat-table">
+        <div></div><strong>最大</strong><strong>平均</strong><strong>目前</strong>
+        <span class="row-label input-label">网络 INPUT流量(Bytes)</span><span id="rxMax">--</span><span id="rxAvg">--</span><span id="rxCurrent">--</span>
+        <span class="row-label output-label">网络 OUTPUT流量(Bytes)</span><span id="txMax">--</span><span id="txAvg">--</span><span id="txCurrent">--</span>
+      </div>
+    </section>
+
+    <hr>
+
+    <section class="chart-section">
+      <div class="section-title-row daily-title-row">
+        <h2>每日总流量 图表</h2>
+        <form id="dailyRangeForm" class="date-range-form">
+          <label>开始 <input type="date" id="dailyStart" required></label>
+          <label>结束 <input type="date" id="dailyEnd" required></label>
+          <button type="submit">查询</button>
+        </form>
+      </div>
+      <div class="chart-wrap daily-chart"><canvas id="dailyChart" role="img" aria-label="自定义时间段每日流量柱状图"></canvas><div id="dailyEmpty" class="chart-empty" hidden>所选时间段暂无数据</div><div id="dailyTooltip" class="chart-tooltip" hidden></div></div>
+      <p class="color-key"><span class="input-label">■ INPUT流量(Bytes)</span>&nbsp;&nbsp; <span class="output-label">■ OUTPUT流量(Bytes)</span></p>
+    </section>
+
+    <hr>
+
+    <section class="destination-section">
+      <div class="section-title-row">
+        <h2>目的地网站 流量排行</h2>
+        <div class="text-tabs" id="destinationRange" aria-label="网站排行时间范围">
+          <button data-range="hour">1 小时</button><span>|</span>
+          <button class="active" data-range="day">今日</button><span>|</span>
+          <button data-range="week">7 天</button>
+        </div>
+      </div>
+      <p class="note">按 HTTP/HTTPS 连接的出站字节数统计，域名来自反向 DNS。</p>
+      <div id="destinationWarning" class="warning" hidden>目标流向采集未启用，请按部署文档打开 conntrack accounting。</div>
+      <div class="destination-head"><strong>排名 / 网站</strong><strong>流量</strong></div>
+      <ol id="destinationList" class="destination-list"></ol>
+      <div id="destinationEmpty" class="list-empty" hidden>当前时间范围内暂无网站流量</div>
+    </section>
+
+    <hr>
+    <p class="footer-row"><a href="/">MRTG首页</a> &nbsp; NetTraffic <span id="version">--</span></p>
+  </main>
+  <script src="/app.js" defer></script>
+</body>
+</html>
