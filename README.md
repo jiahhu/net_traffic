@@ -36,9 +36,33 @@ make build-linux
 
 ## 安装到 CentOS 7
 
-将整个目录或至少 `dist/`、`deploy/`、`scripts/` 上传到服务器，然后执行：
+从源码下载后，推荐直接执行一键安装脚本。脚本会详细打印正在执行的命令，自动安装依赖、安装 Go、编译二进制、安装 systemd 服务并开放 8080 端口：
 
 ```bash
+git clone git@github.com:jiahhu/net_traffic.git
+cd net_traffic
+sudo bash scripts/onekey-install-centos7.sh
+```
+
+默认会安装 Go `1.25.4`。如果服务器已有 Go `1.25+`，脚本会直接复用现有 Go。可通过环境变量覆盖默认行为：
+
+```bash
+# 指定 Go 版本
+sudo env GO_INSTALL_VERSION=1.25.4 bash scripts/onekey-install-centos7.sh
+
+# 不自动开放 firewalld 端口
+sudo env NETTRAFFIC_OPEN_FIREWALL=0 bash scripts/onekey-install-centos7.sh
+
+# 关闭命令追踪输出
+sudo env TRACE=0 bash scripts/onekey-install-centos7.sh
+```
+
+也可以手动编译后再安装：
+
+```bash
+go mod download
+make test
+make build-linux
 sudo bash scripts/install-centos7.sh
 sudo firewall-cmd --permanent --add-port=8080/tcp
 sudo firewall-cmd --reload
