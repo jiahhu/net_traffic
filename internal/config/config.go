@@ -19,6 +19,7 @@ type Config struct {
 	Mock             bool
 	ConntrackPath    string
 	ResolveHostnames bool
+	Destinations     bool
 }
 
 func Parse() Config {
@@ -32,6 +33,7 @@ func Parse() Config {
 	flag.StringVar(&c.Password, "password", os.Getenv("NETTRAFFIC_PASSWORD"), "optional HTTP Basic Auth password")
 	flag.StringVar(&c.ConntrackPath, "conntrack", env("NETTRAFFIC_CONNTRACK", "/proc/net/nf_conntrack"), "conntrack table path")
 	flag.BoolVar(&c.ResolveHostnames, "resolve-hostnames", envBool("NETTRAFFIC_RESOLVE_HOSTNAMES", true), "reverse-resolve destination IPs")
+	flag.BoolVar(&c.Destinations, "destinations", envBool("NETTRAFFIC_DESTINATIONS_ENABLED", true), "enable destination ranking via conntrack")
 	flag.BoolVar(&c.Mock, "mock", envBool("NETTRAFFIC_MOCK", false), "generate demo data (development only)")
 	flag.Parse()
 	if c.Interval < time.Second {

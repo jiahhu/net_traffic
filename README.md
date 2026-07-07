@@ -36,7 +36,7 @@ make build-linux
 
 ## 安装到 CentOS 7
 
-从源码下载后，推荐直接执行一键安装脚本。脚本会详细打印正在执行的命令，自动安装依赖、安装 Go、编译二进制、安装 systemd 服务并开放 8080 端口：
+从源码下载后，推荐直接执行一键安装脚本。脚本会详细打印正在执行的命令，自动安装依赖、安装 Go、编译二进制并安装 systemd 服务：
 
 ```bash
 git clone git@github.com:jiahhu/net_traffic.git
@@ -44,14 +44,28 @@ cd net_traffic
 sudo bash scripts/onekey-install-centos7.sh
 ```
 
+安装过程中会询问是否开启“目标网站排行”，直接回车默认 `N`。Trojan、代理网关、高连接数服务器建议选择 `N`；实时流量、总流量和每日图表不受影响。选择 `N` 时脚本不会启用 conntrack accounting。
+
 默认会安装 Go `1.25.4`。如果服务器已有 Go `1.25+`，脚本会直接复用现有 Go。可通过环境变量覆盖默认行为：
 
 ```bash
 # 指定 Go 版本
 sudo env GO_INSTALL_VERSION=1.25.4 bash scripts/onekey-install-centos7.sh
 
-# 不自动开放 firewalld 端口
-sudo env NETTRAFFIC_OPEN_FIREWALL=0 bash scripts/onekey-install-centos7.sh
+# 非交互方式指定是否开启目标网站排行
+sudo env NETTRAFFIC_DESTINATIONS_ENABLED=false bash scripts/onekey-install-centos7.sh
+
+# 防火墙行为默认为 auto：如果 firewalld 已运行，只追加放行 8080；
+# 如果 firewalld 未运行，不会主动启动，避免影响 Trojan/Nginx 等已有 80/443 服务。
+
+# 强制启动 firewalld 并放行 8080
+sudo env NETTRAFFIC_FIREWALL_MODE=enable bash scripts/onekey-install-centos7.sh
+
+# 强制启动 firewalld，并额外放行 Trojan 常用的 443/tcp
+sudo env NETTRAFFIC_FIREWALL_MODE=enable NETTRAFFIC_EXTRA_FIREWALL_PORTS=443/tcp bash scripts/onekey-install-centos7.sh
+
+# 完全跳过 firewalld 配置
+sudo env NETTRAFFIC_FIREWALL_MODE=skip bash scripts/onekey-install-centos7.sh
 
 # 关闭命令追踪输出
 sudo env TRACE=0 bash scripts/onekey-install-centos7.sh
@@ -82,6 +96,30 @@ sudo systemctl restart nettraffic
 sudo journalctl -u nettraffic -f
 ```
 
+若服务器上已有 Trojan、Nginx、Caddy 等服务占用 80/443，NetTraffic 默认不会占用这些端口。若安装后 443 无法访问，优先检查 firewalld 是否被启用且未放行 443：
+
+```bash
+sudo systemctl status firewalld
+sudo firewall-cmd --list-all
+sudo ss -lntp | egrep ':443|:8080'
+```
+
+如果确认是 firewalld 拦截 Trojan 的 443 端口，执行：
+
+```bash
+sudo firewall-cmd --permanent --add-port=443/tcp
+sudo firewall-cmd --reload
+```
+
+如果服务器连接数很高，并且怀疑 conntrack 扫描或 accounting 带来额外负载，可以临时关闭“目标网站排行”，实时总流量监控不受影响：
+
+```bash
+sudo sed -i 's/^NETTRAFFIC_DESTINATIONS_ENABLED=.*/NETTRAFFIC_DESTINATIONS_ENABLED=false/' /etc/nettraffic/nettraffic.env
+sudo rm -f /etc/sysctl.d/99-nettraffic.conf
+sudo sysctl -w net.netfilter.nf_conntrack_acct=0
+sudo systemctl restart nettraffic
+```
+
 ## 目标网站排行的工作方式
 
 安装脚本会启用 `net.netfilter.nf_conntrack_acct=1`。服务读取 `/proc/net/nf_conntrack` 中本机发起的 80、443、8080、8443 端口连接，按字节增量统计目标 IP，并通过反向 DNS 尽可能显示域名。
@@ -108,6 +146,7 @@ ls -l /proc/net/nf_conntrack
 | `NETTRAFFIC_RETENTION_DAYS` | `90` | 原始样本保留天数 |
 | `NETTRAFFIC_USERNAME` | 空 | Basic Auth 用户名 |
 | `NETTRAFFIC_PASSWORD` | 空 | Basic Auth 密码 |
+| `NETTRAFFIC_DESTINATIONS_ENABLED` | `true` | 是否启用目标网站排行 |
 | `NETTRAFFIC_RESOLVE_HOSTNAMES` | `true` | 是否反向解析目标 IP |
 
 ## API

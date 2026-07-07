@@ -114,14 +114,21 @@ func (c *Collector) Run(ctx context.Context) {
 			if c.cfg.Mock {
 				destinationTracking = true
 				_ = c.store.SaveDestinations(ctx, now, c.mockDestinations())
-			} else if rows, err := c.conntrack.sample(ctx); err == nil {
+			} else if c.cfg.Destinations {
+				rows, err := c.conntrack.sample(ctx)
+				if err != nil {
+					if now.Sub(c.conntrack.lastWarnAt) > time.Hour {
+						log.Printf("destination tracking unavailable: %v", conntrackHelp(c.cfg.ConntrackPath, err))
+						c.conntrack.lastWarnAt = now
+					}
+					status := Status{Time: now.Unix(), Interface: c.iface, RXRate: rxRate, TXRate: txRate, RXTotal: current.rx, TXTotal: current.tx, Uptime: uptimeSeconds(), DestinationTracking: destinationTracking}
+					c.publish(status)
+					continue
+				}
 				destinationTracking = true
 				if err := c.store.SaveDestinations(ctx, now, rows); err != nil {
 					log.Printf("save destination sample: %v", err)
 				}
-			} else if now.Sub(c.conntrack.lastWarnAt) > time.Hour {
-				log.Printf("destination tracking unavailable: %v", conntrackHelp(c.cfg.ConntrackPath, err))
-				c.conntrack.lastWarnAt = now
 			}
 			status := Status{Time: now.Unix(), Interface: c.iface, RXRate: rxRate, TXRate: txRate, RXTotal: current.rx, TXTotal: current.tx, Uptime: uptimeSeconds(), DestinationTracking: destinationTracking}
 			c.publish(status)
