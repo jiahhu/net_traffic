@@ -89,10 +89,10 @@ current_go_version() {
 normalize_bool() {
   local value=${1:-}
   case "$value" in
-    1|true|TRUE|yes|YES|y|Y|on|ON)
+    1|true|TRUE|True|t|T|yes|YES|y|Y|on|ON)
       echo true
       ;;
-    0|false|FALSE|no|NO|n|N|off|OFF)
+    0|false|FALSE|False|f|F|no|NO|n|N|off|OFF)
       echo false
       ;;
     *)
@@ -101,8 +101,22 @@ normalize_bool() {
   esac
 }
 
+valid_interval() {
+  local value=${1:-}
+  [[ "$value" =~ ^([0-9]+([.][0-9]+)?(ns|us|ms|s|m|h))+$ && "$value" =~ [1-9] ]]
+}
+
+read_installed_env() {
+  local key=$1
+  local file=/etc/nettraffic/nettraffic.env
+
+  [[ -r "$file" ]] || return 0
+  awk -F= -v key="$key" '$1 == key {sub(/^[^=]*=/, ""); value=$0; sub(/^[[:space:]]+/, "", value); sub(/[[:space:]]+$/, "", value); first=substr(value, 1, 1); last=substr(value, length(value), 1); quote=sprintf("%c", 39); if ((first == "\"" && last == "\"") || (first == quote && last == quote)) value=substr(value, 2, length(value)-2)} END {print value}' "$file"
+}
+
 choose_destination_tracking() {
   local answer
+  local installed
   local normalized
 
   if [[ -n "${NETTRAFFIC_DESTINATIONS_ENABLED:-}" ]]; then
@@ -129,11 +143,58 @@ choose_destination_tracking() {
       export NETTRAFFIC_DESTINATIONS_ENABLED=false
     fi
   else
-    export NETTRAFFIC_DESTINATIONS_ENABLED=true
-    echo "非交互环境，默认开启目标网站排行。可设置 NETTRAFFIC_DESTINATIONS_ENABLED=false 关闭。"
+    installed=$(read_installed_env NETTRAFFIC_DESTINATIONS_ENABLED)
+    if normalized=$(normalize_bool "$installed"); then
+      export NETTRAFFIC_DESTINATIONS_ENABLED="$normalized"
+      echo "非交互更新，保留已安装的目标网站排行配置。"
+    else
+      export NETTRAFFIC_DESTINATIONS_ENABLED=false
+      echo "非交互新安装，默认关闭目标网站排行。可设置 NETTRAFFIC_DESTINATIONS_ENABLED=true 开启。"
+    fi
   fi
 
   echo "目标网站排行：${NETTRAFFIC_DESTINATIONS_ENABLED}"
+}
+
+configure_runtime_defaults() {
+  local existing_interval
+  local interval_default=5s
+  local installed_resolve
+  local normalized
+
+  if [[ "$NETTRAFFIC_DESTINATIONS_ENABLED" == "true" ]]; then
+    interval_default=10s
+  fi
+  if [[ -z "${NETTRAFFIC_INTERVAL:-}" ]]; then
+    existing_interval=$(read_installed_env NETTRAFFIC_INTERVAL)
+    if valid_interval "$existing_interval"; then
+      if [[ "$existing_interval" == "2s" ]]; then
+        export NETTRAFFIC_INTERVAL="$interval_default"
+      else
+        export NETTRAFFIC_INTERVAL="$existing_interval"
+      fi
+    else
+      export NETTRAFFIC_INTERVAL="$interval_default"
+    fi
+  fi
+  if ! valid_interval "$NETTRAFFIC_INTERVAL"; then
+    echo "NETTRAFFIC_INTERVAL 不是有效的 Go duration，例如 5s、10s 或 1m。" >&2
+    return 1
+  fi
+  if [[ -z "${NETTRAFFIC_RESOLVE_HOSTNAMES:-}" ]]; then
+    installed_resolve=$(read_installed_env NETTRAFFIC_RESOLVE_HOSTNAMES)
+    if normalized=$(normalize_bool "$installed_resolve"); then
+      export NETTRAFFIC_RESOLVE_HOSTNAMES="$normalized"
+    fi
+  fi
+  normalized=$(normalize_bool "${NETTRAFFIC_RESOLVE_HOSTNAMES:-false}") || {
+    echo "NETTRAFFIC_RESOLVE_HOSTNAMES 只能设置为 true 或 false。" >&2
+    return 1
+  }
+  export NETTRAFFIC_RESOLVE_HOSTNAMES="$normalized"
+
+  echo "采样间隔：${NETTRAFFIC_INTERVAL}"
+  echo "目标地址反向 DNS：${NETTRAFFIC_RESOLVE_HOSTNAMES}"
 }
 
 install_go_if_needed() {
@@ -170,6 +231,7 @@ if command -v update-ca-trust >/dev/null 2>&1; then
 fi
 
 choose_destination_tracking
+configure_runtime_defaults
 install_go_if_needed
 
 export PATH="/usr/local/go/bin:$PATH"
@@ -189,10 +251,43 @@ normalize_firewall_port() {
   fi
 }
 
+detect_firewall_zone() {
+  local scope=$1
+  local iface
+  local zone
+
+  if [[ -n "${NETTRAFFIC_FIREWALL_ZONE:-}" ]]; then
+    echo "$NETTRAFFIC_FIREWALL_ZONE"
+    return 0
+  fi
+  iface=$(ip -4 route show default 2>/dev/null | awk 'NR == 1 {for (i = 1; i <= NF; i++) if ($i == "dev") {print $(i + 1); exit}}' || true)
+  if [[ -n "$iface" ]]; then
+    if [[ "$scope" == "permanent" ]]; then
+      zone=$(firewall-cmd --permanent --get-zone-of-interface="$iface" 2>/dev/null || true)
+    else
+      zone=$(firewall-cmd --get-zone-of-interface="$iface" 2>/dev/null || true)
+    fi
+    if [[ -n "$zone" && "$zone" != "no zone" ]]; then
+      echo "$zone"
+      return 0
+    fi
+  fi
+  firewall-cmd --get-default-zone
+}
+
 add_firewall_port() {
+  local runtime_zone=$1
+  local permanent_zone=$2
   local port
-  port=$(normalize_firewall_port "$1")
-  firewall-cmd --permanent --add-port="$port" || echo "firewalld 端口 ${port} 放行失败，请手动检查防火墙。"
+  port=$(normalize_firewall_port "$3")
+  if ! firewall-cmd --zone="$runtime_zone" --query-port="$port" >/dev/null; then
+    firewall-cmd --zone="$runtime_zone" --add-port="$port"
+  fi
+  if ! firewall-cmd --permanent --zone="$permanent_zone" --query-port="$port" >/dev/null; then
+    firewall-cmd --permanent --zone="$permanent_zone" --add-port="$port"
+  fi
+  firewall-cmd --zone="$runtime_zone" --query-port="$port" >/dev/null
+  firewall-cmd --permanent --zone="$permanent_zone" --query-port="$port" >/dev/null
 }
 
 configure_firewall() {
@@ -200,22 +295,20 @@ configure_firewall() {
   local port=${NETTRAFFIC_FIREWALL_PORT:-8080}
   local extra_ports=${NETTRAFFIC_EXTRA_FIREWALL_PORTS:-}
   local extra_port
+  local permanent_zone
+  local runtime_zone
 
   case "$mode" in
     0|false|FALSE|off|OFF|none|NONE|skip|SKIP)
       echo "跳过 firewalld 配置。"
       return 0
       ;;
-    auto|AUTO|"")
+    auto|AUTO|""|1|true|TRUE|on|ON|enable|ENABLE|force|FORCE)
       if ! systemctl is-active --quiet firewalld; then
-        echo "firewalld 当前未运行，默认不主动启动，避免影响已有 80/443 等服务。"
-        echo "如需脚本启动并配置 firewalld，请使用：NETTRAFFIC_FIREWALL_MODE=enable"
+        echo "firewalld 当前未运行；为避免影响 Trojan、SSH 和现有规则，脚本不会主动启动它。"
+        echo "请通过云安全组或现有防火墙手动放行 ${port}/tcp。"
         return 0
       fi
-      ;;
-    1|true|TRUE|on|ON|enable|ENABLE|force|FORCE)
-      yum install -y firewalld
-      systemctl enable --now firewalld
       ;;
     *)
       echo "未知 NETTRAFFIC_FIREWALL_MODE=${mode}，跳过 firewalld 配置。"
@@ -223,17 +316,27 @@ configure_firewall() {
       ;;
   esac
 
-  if ! command -v firewall-cmd >/dev/null 2>&1; then
-    yum install -y firewalld
-  fi
+  command -v firewall-cmd >/dev/null 2>&1 || {
+    echo "firewalld 正在运行，但未找到 firewall-cmd。" >&2
+    return 1
+  }
 
   firewall-cmd --state
-  add_firewall_port "$port"
+  runtime_zone=$(detect_firewall_zone runtime)
+  permanent_zone=$(detect_firewall_zone permanent)
+  [[ -n "$runtime_zone" && -n "$permanent_zone" ]] || {
+    echo "无法确定 firewalld zone，请设置 NETTRAFFIC_FIREWALL_ZONE。" >&2
+    return 1
+  }
+  echo "firewalld 运行时 zone：${runtime_zone}"
+  echo "firewalld 永久 zone：${permanent_zone}"
+  add_firewall_port "$runtime_zone" "$permanent_zone" "$port"
   for extra_port in $extra_ports; do
-    add_firewall_port "$extra_port"
+    add_firewall_port "$runtime_zone" "$permanent_zone" "$extra_port"
   done
-  firewall-cmd --reload || echo "firewalld reload 失败，请手动检查防火墙。"
-  firewall-cmd --list-all || true
+  firewall-cmd --zone="$runtime_zone" --list-all
+  firewall-cmd --permanent --zone="$permanent_zone" --list-all
+  echo "firewalld 已验证运行时与永久规则，未执行 reload，因此不会清除现有的仅运行时规则。"
 }
 
 FIREWALL_PORT=${NETTRAFFIC_FIREWALL_PORT:-8080}
@@ -250,5 +353,7 @@ echo "NetTraffic 一键安装完成。"
 echo "访问地址：http://${SERVER_IP:-服务器IP}:${FIREWALL_PORT}"
 echo "配置文件：/etc/nettraffic/nettraffic.env"
 echo "目标网站排行：${NETTRAFFIC_DESTINATIONS_ENABLED}"
+echo "目标地址反向 DNS：${NETTRAFFIC_RESOLVE_HOSTNAMES}"
+echo "采样间隔：${NETTRAFFIC_INTERVAL}"
 echo "查看日志：sudo journalctl -u nettraffic -f"
 echo "重启服务：sudo systemctl restart nettraffic"
